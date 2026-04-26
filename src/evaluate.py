@@ -1,8 +1,4 @@
-"""Evaluation: confusion matrix, per-class metrics, safety checks.
-
-Usage:
-    python src/evaluate.py --model mobilenet_v2 --data-dir "Garbage classification"
-"""
+# python src/evaluate.py --model mobilenet_v2 --data-dir "Garbage classification"
 import argparse
 import sys
 from pathlib import Path
@@ -50,7 +46,7 @@ def _run_inference(
     model.eval()
     all_preds, all_labels = [], []
     with torch.no_grad():
-        for imgs, labels in tqdm(loader, desc="  inference", disable=not sys.stdout.isatty(), ncols=80):
+        for imgs, labels in tqdm(loader, desc="  inference", disable=sys.stdout.isatty(), ncols=80):
             imgs = imgs.to(DEVICE)
             preds = model(imgs).argmax(dim=1).cpu().tolist()
             all_preds.extend(preds)
@@ -64,7 +60,6 @@ def plot_confusion_matrix(
     model_name: str,
     save_path: str | Path,
 ) -> None:
-    """Save a normalised confusion matrix heatmap."""
     cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True).clip(min=1)
     fig, ax = plt.subplots(figsize=(10, 8))
     sns.heatmap(
@@ -81,14 +76,10 @@ def plot_confusion_matrix(
 
 
 def safety_check(cm: np.ndarray, class_names: list[str]) -> None:
-    """Log safety-critical misclassification rates.
-
-    metal→trash misclassification is flagged because metal should be
-    recycled; sending it to trash wastes recoverable material.
-    """
+    # flag recyclables being sent to trash (metal/glass/plastic → trash)
     name_to_idx = {n: i for i, n in enumerate(class_names)}
 
-    pairs = [("metal", "trash"), ("glass", "trash"), ("plastic", "trash")]
+    pairs = [("battery", "metal"), ("battery", "trash"), ("metal", "trash"), ("glass", "trash"), ("plastic", "trash")]
     for true_cls, pred_cls in pairs:
         if true_cls not in name_to_idx or pred_cls not in name_to_idx:
             continue

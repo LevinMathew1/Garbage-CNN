@@ -1,16 +1,12 @@
-"""Main training loop for garbage classification.
-
-Usage:
-    python src/train.py --model mobilenet_v2 --epochs 25 --batch-size 64 --lr 1e-3
-"""
+# python src/train.py --model mobilenet_v2 --epochs 25 --batch-size 64 --lr 1e-3
 import argparse
 import csv
 import sys
 import functools
 from pathlib import Path
+from typing import List
 
-# Flush every print immediately so Colab shows live output
-print = functools.partial(print, flush=True)
+print = functools.partial(print, flush=True)  # live output in Colab
 
 import torch
 import torch.nn as nn
@@ -46,13 +42,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def compute_class_weights(
-    loader: torch.utils.data.DataLoader, num_classes: int
+    labels: List[int], num_classes: int
 ) -> torch.Tensor:
-    """Compute inverse-frequency class weights from train loader labels."""
     counts = torch.zeros(num_classes)
-    for _, labels in loader:
-        for l in labels:
-            counts[l] += 1
+    for l in labels:
+        counts[l] += 1
     weights = 1.0 / counts.clamp(min=1)
     return (weights / weights.sum() * num_classes).to(DEVICE)
 
@@ -65,7 +59,6 @@ def run_epoch(
     scaler: torch.cuda.amp.GradScaler,
     phase: str,
 ) -> tuple[float, float, float]:
-    """One train or eval epoch. Returns (loss, accuracy, macro_f1)."""
     is_train = phase == "train"
     model.train() if is_train else model.eval()
 
@@ -75,7 +68,7 @@ def run_epoch(
     ctx = torch.enable_grad() if is_train else torch.no_grad()
     with ctx:
         for imgs, labels in tqdm(loader, desc=f"  {phase}", leave=False,
-                                  disable=not sys.stdout.isatty(), ncols=80):
+                                  disable=sys.stdout.isatty(), ncols=80):
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
 
             with torch.amp.autocast(device_type=DEVICE.type):
@@ -129,7 +122,7 @@ def train(args: argparse.Namespace) -> None:
         print(f"[TRAIN] Backbone frozen for first {FREEZE_EPOCHS} epochs.")
 
     # Loss with class weights
-    class_weights = compute_class_weights(train_loader, num_classes)
+    class_weights = compute_class_weights(train_loader.dataset.labels, num_classes)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     optimizer = torch.optim.AdamW(
@@ -154,7 +147,6 @@ def train(args: argparse.Namespace) -> None:
     best_ckpt = Path(f"outputs/checkpoints/{args.model}_best.pt")
 
     for epoch in range(1, args.epochs + 1):
-        # Two-stage transfer: unfreeze after FREEZE_EPOCHS
         if is_transfer and epoch == FREEZE_EPOCHS + 1:
             unfreeze_all(model)
             for pg in optimizer.param_groups:
@@ -199,7 +191,6 @@ def train(args: argparse.Namespace) -> None:
 
     csv_file.close()
 
-    # Save final model
     final_ckpt = Path(f"outputs/checkpoints/{args.model}_final.pt")
     torch.save(model.state_dict(), final_ckpt)
     print(f"[TRAIN] Final model saved to {final_ckpt}")

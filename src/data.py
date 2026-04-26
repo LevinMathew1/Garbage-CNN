@@ -1,4 +1,3 @@
-"""Dataset loading, transforms, and dataloaders for garbage classification."""
 import os
 from pathlib import Path
 from typing import List, Tuple
@@ -36,8 +35,6 @@ def _build_transform(split: str, img_size: int = 224) -> transforms.Compose:
 
 
 class GarbageDataset(Dataset):
-    """Simple file-path dataset for garbage classification."""
-
     def __init__(
         self,
         paths: List[str],
@@ -56,35 +53,37 @@ class GarbageDataset(Dataset):
         return self.transform(img), self.labels[idx]
 
 
+IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+
+
 def _collect_paths_and_labels(
     data_dir: str | Path,
 ) -> Tuple[List[str], List[int], List[str]]:
-    """Scan data_dir/<class>/ and return (paths, labels, class_names).
-
-    Supports two layouts:
-    1. Flat:  data_dir/<class>/*.jpg
-    2. Split: data_dir/train/<class>/*.jpg  (uses 'train' subfolder only)
-    """
     data_dir = Path(data_dir)
 
-    # Detect split-style layout
-    train_sub = data_dir / "train"
-    source_dir = train_sub if train_sub.is_dir() else data_dir
+    # if the dataset ships with its own train/val/test folders, pool them all
+    # so our stratified re-split uses the full dataset
+    split_dirs = [data_dir / s for s in ("train", "val", "test") if (data_dir / s).is_dir()]
+    source_dirs = split_dirs if split_dirs else [data_dir]
 
-    class_dirs = sorted([p for p in source_dir.iterdir() if p.is_dir()])
-    class_names = [p.name for p in class_dirs]
+    # derive class names from whichever source dir has the most subdirs
+    class_names = sorted([p.name for p in source_dirs[0].iterdir() if p.is_dir()])
 
     paths, labels = [], []
-    for label_idx, class_dir in enumerate(class_dirs):
-        for img_path in class_dir.glob("*.[jJpP][pPnN][gG]*"):
-            paths.append(str(img_path))
-            labels.append(label_idx)
+    for source_dir in source_dirs:
+        for label_idx, class_name in enumerate(class_names):
+            class_dir = source_dir / class_name
+            if not class_dir.is_dir():
+                continue
+            for img_path in class_dir.iterdir():
+                if img_path.suffix in IMG_EXTENSIONS:
+                    paths.append(str(img_path))
+                    labels.append(label_idx)
 
     return paths, labels, class_names
 
 
 def _make_weighted_sampler(labels: List[int], num_classes: int) -> WeightedRandomSampler:
-    """Return a sampler that up-weights minority classes."""
     class_counts = np.bincount(labels, minlength=num_classes).astype(float)
     class_weights = 1.0 / np.maximum(class_counts, 1)
     sample_weights = torch.tensor([class_weights[l] for l in labels], dtype=torch.float)
@@ -100,20 +99,6 @@ def get_dataloaders(
     num_workers: int = 2,
     use_weighted_sampler: bool = True,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, List[str]]:
-    """Build train/val/test dataloaders with stratified splits.
-
-    Args:
-        data_dir: Root directory. Supports flat or train/val/test layout.
-        batch_size: Mini-batch size.
-        img_size: Crop size (224 for ImageNet models).
-        val_split: Fraction of data for validation.
-        test_split: Fraction of data for test.
-        num_workers: DataLoader worker processes.
-        use_weighted_sampler: Apply WeightedRandomSampler on train set.
-
-    Returns:
-        (train_loader, val_loader, test_loader, class_names)
-    """
     try:
         all_paths, all_labels, class_names = _collect_paths_and_labels(data_dir)
     except Exception as exc:
@@ -124,7 +109,7 @@ def get_dataloaders(
 
     print(f"[DATA] Found {len(all_paths)} images across {len(class_names)} classes: {class_names}")
 
-    # First carve out test, then split remainder into train/val
+    # carve out test first, then split the rest into train/val
     rel_val = val_split / (1.0 - test_split)
 
     paths_tv, paths_test, labels_tv, labels_test = train_test_split(
