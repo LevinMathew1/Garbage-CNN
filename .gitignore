@@ -1,0 +1,8 @@
+outputs/checkpoints/
+data/
+*.pt
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+.DS_Store
+kaggle.json
